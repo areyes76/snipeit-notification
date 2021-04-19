@@ -1,0 +1,16 @@
+{
+	"tipo":"ms",
+	"descripcion":"micro-servicio app-snipeit-api",
+	"deploy": {
+		"name": "app-snipeit-api",
+		"registry": "registry.argacme.corp:36000",
+		"cluster": "kubernetes@laboratoro.local",
+		"namespace" : "tools",
+		"image": "jdk8-alpine"
+	},
+	"owner": {
+		"date": "08-09-2020",
+		"name": "Desa argacme",
+		"email": "desa@argacme.cl"
+	}
+}

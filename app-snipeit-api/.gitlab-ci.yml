@@ -1,0 +1,125 @@
+variables:
+    #CI_DEBUG_TRACE: "true"
+    PROJECT_NAME: $CI_PROJECT_NAME
+    DOCKER_IMAGE: "${REGISTRYDESA}/${NAMESPACE}/${IMAGENAME}_${CI_PROJECT_NAME}_${VERSION}:${CI_PIPELINE_ID}"
+    LINE: "--===========================================================--"
+
+stages:
+      - start
+      - sonar
+      - build
+      - kubernetes
+
+start:
+  stage: start
+  before_script:
+      - echo "start before_script"
+      - mkdir -p logs
+      - echo "export ROLLBACK=False" > rollback
+      - datetime=$(date '+%d-%m-%Y %H:%M:%S')
+      - echo "${datetime}"
+  script:
+      - echo "start script"
+      - FILE_LOG="${PROJECT_NAME}-${CI_PIPELINE_ID}-${CI_COMMIT_SHA:0:8}-COMPILE-DESA.txt"
+      - whoami
+      - mvn install compile >> ./logs/${FILE_LOG}
+      - ls -ltra  >> ./logs/${FILE_LOG}
+  allow_failure: false
+  artifacts:
+    name: "start_${PROJECT_NAME}-${CI_PIPELINE_ID}-${CI_COMMIT_SHA:0:8}"
+    when: always
+    paths:
+      - ./logs/
+
+pruebas sonar:
+  stage: sonar
+  before_script:
+      - echo "inicio sonarqube before_script"
+      - date_sonar=$(date '+%Y-%m-%d')     
+      - echo "fin sonarqube before_script" 
+  script:
+      - echo "INICIO SONAR script......"
+      - echo "FIN SONAR script......"
+  allow_failure: true
+  artifacts:
+    name: "reporte_sonarqube"
+    when: always 
+    paths:
+      - reporte_sonar/
+
+build image:
+  stage: build
+  before_script:
+      - echo "build before_script"  
+      - mvn install 
+      - jq --version   
+      - JSON_NAME="$(jq '.deploy.name' data.json | sed s/" "/_/g | sed s/'"'/''/g )" 
+      - JSON_REGISTRY="$(jq '.deploy.registry' data.json | sed s/" "/_/g | sed s/'"'/''/g )"      
+      - JSON_NAMESPACE="$(jq '.deploy.namespace' data.json | sed s/" "/_/g | sed s/'"'/''/g )"
+      - JSON_IMAGE="$(jq '.deploy.image' data.json | sed s/" "/_/g | sed s/'"'/''/g)"
+      - JSON_CLUSTER="$(jq '.deploy.cluster' data.json | sed s/" "/_/g | sed s/'"'/''/g)"
+      # PARA ESTE PARTE LA CREACION DE DOCKER_IMAGE SE HACE DE FORMA NORMAL, PARA EJECUTAR EL COMANDO.
+      - DOCKER_IMAGE="${JSON_REGISTRY}/${JSON_NAMESPACE}/${JSON_IMAGE}_${CI_PROJECT_NAME}:${CI_PIPELINE_ID}_${CI_COMMIT_SHA:0:8}"
+  script:
+      - echo "SCRIPT BUILD IMAGE......"
+      - FILE_LOG="${PROJECT_NAME}-${CI_PIPELINE_ID}-${CI_COMMIT_SHA:0:8}-DOCKER-DESA.txt"
+      - set +e # Disable exit on error
+      - ls -ltra
+      - echo "VAR JSON_NAME => ${JSON_NAME}"
+      - echo "VAR JSON_NAMESPACE => ${JSON_NAMESPACE}"
+      - echo "VAR DOCKER_IMAGE => ${DOCKER_IMAGE}"
+      - echo "--- " >> ./logs/${FILE_LOG}
+      - docker build -t ${DOCKER_IMAGE} . >> ./logs/${FILE_LOG}
+      - echo "--- " >> ./logs/${FILE_LOG}
+      - docker push ${DOCKER_IMAGE}  >> ./logs/${FILE_LOG}
+      - echo "FIN SCRIPT BUILD IMAGE......"
+  artifacts:
+    name: "build_${PROJECT_NAME}-${CI_PIPELINE_ID}-${CI_COMMIT_SHA:0:8}"
+    when: always
+    paths:
+      - ./logs/
+kubernetes:
+  stage: kubernetes
+  before_script:
+      - echo "PASO kubernetes before_script ........................"
+      - JSON_REGISTRY="$(jq '.deploy.registry' data.json | sed s/" "/_/g | sed s/'"'/''/g )"      
+      - JSON_NAME="$(jq '.deploy.name' data.json | sed s/" "/_/g | sed s/'"'/''/g )"
+      - JSON_NAMESPACE="$(jq '.deploy.namespace' data.json | sed s/" "/_/g | sed s/'"'/''/g )"
+      - JSON_IMAGE="$(jq '.deploy.image' data.json | sed s/" "/_/g | sed s/'"'/''/g)"
+      - JSON_CLUSTER="$(jq '.deploy.cluster' data.json | sed s/" "/_/g | sed s/'"'/''/g)"
+      # PARA ESTE PARTE LA CREACION DE DOCKER_IMAGE SE HACE DE FORMA DIFERENTE, PARA SER USADA CON EL COMANDO SED.
+      - DOCKER_IMAGE="${JSON_REGISTRY}\\/${JSON_NAMESPACE}\\/${JSON_IMAGE}_${CI_PROJECT_NAME}:${CI_PIPELINE_ID}_${CI_COMMIT_SHA:0:8}"
+      - echo "VAR CI_COMMIT_SHA => ${CI_COMMIT_SHA}"
+      - echo "VAR JSON_REGISTRY => ${JSON_REGISTRY}"
+      - echo "VAR JSON_NAME => ${JSON_NAME}"
+      - echo "VAR JSON_NAMESPACE => ${JSON_NAMESPACE}"
+      - echo "VAR JSON_IMAGE => ${JSON_IMAGE}"
+      - echo "VAR JSON_CLUSTER => ${JSON_CLUSTER}"
+      - echo "VAR CI_PROJECT_NAME => ${CI_PROJECT_NAME}"
+      - echo "VAR CI_PIPELINE_ID => ${CI_PIPELINE_ID}"
+      - echo "VAR DOCKER_IMAGE => ${DOCKER_IMAGE}"
+      - whoami             
+  script:
+      - echo "kubernetes script ...................................."
+      - FILE_LOG="${PROJECT_NAME}-${CI_PIPELINE_ID}-${CI_COMMIT_SHA:0:8}-K8S-DESA.txt"
+      - kubectl config get-contexts
+      - kubectl config use-context ${JSON_CLUSTER}
+      - kubectl get nodes
+      - sed -i 's/@_namespace/'"${JSON_NAMESPACE}"'/g' *.yaml
+      - sed -i 's/@name/'"${JSON_NAME}"'/g' *.yaml
+      - sed -i 's/@_imagecommit/'"${DOCKER_IMAGE}"'/g' *.yaml
+      - echo "--- " >> ./logs/${FILE_LOG}
+      - cat service.yaml
+      - echo "--- " >> ./logs/${FILE_LOG}
+      - cat deploy.yaml
+      - echo "--- " >> ./logs/${FILE_LOG}
+      - mkdir ${JSON_NAMESPACE} && cp *.yaml ${JSON_NAMESPACE}/
+      - kubectl -n ${JSON_NAMESPACE} apply -f ./${JSON_NAMESPACE} >> ./logs/${FILE_LOG}
+      - echo "--- " >> ./logs/${FILE_LOG}
+      - kubectl get -n ${JSON_NAMESPACE} po,deploy,svc,ing  >> ./logs/${FILE_LOG} >> ./logs/${FILE_LOG}
+      - echo "......................................................"  
+  artifacts:
+    name: "kubernetes_${PROJECT_NAME}-${CI_PIPELINE_ID}-${CI_COMMIT_SHA:0:8}"
+    when: always
+    paths:
+      - ./logs/   
